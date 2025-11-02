@@ -9,9 +9,7 @@
       "src": "client/package.json",
       "use": "@vercel/static-build",
       "config": {
-        "distDir": "dist",
-        "installCommand": "npm install --include=dev",
-        "buildCommand": "npm run build"
+        "distDir": "dist"
       }
     }
   ],
@@ -27,5 +25,10 @@
       "src": "/(.*)",
       "dest": "client/dist/index.html"
     }
-  ]
+  ],
+  "build": {
+    "env": {
+      "NPM_FLAGS": "--include=dev"
+    }
+  }
 }
