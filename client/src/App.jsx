@@ -3,8 +3,11 @@ import axios from 'axios';
 import RecordForm from './components/RecordForm.jsx';
 import Login from './components/Login.jsx';
 
-// 直接使用固定的API地址，确保连接到正确的后端
-const API_BASE_URL = 'http://localhost:4000';
+// 自适应 API 基地址：本地使用 4000 端口，部署后使用相对路径
+const API_BASE_URL =
+  typeof window !== 'undefined' && window.location.hostname === 'localhost'
+    ? 'http://localhost:4000'
+    : '';
 
 const apiClient = axios.create({
   baseURL: API_BASE_URL,

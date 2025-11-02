@@ -1,7 +1,11 @@
 import { useState, useEffect } from 'react';
 import axios from 'axios';
 
-const API_BASE_URL = 'http://localhost:4000';
+// 自适应 API 基地址：本地使用 4000 端口，部署后使用相对路径
+const API_BASE_URL =
+  typeof window !== 'undefined' && window.location.hostname === 'localhost'
+    ? 'http://localhost:4000'
+    : '';
 
 const Login = ({ onLogin, onChangePassword }) => {
   const [password, setPassword] = useState('');
