@@ -53,11 +53,30 @@ cd ../client
 npm run dev
 ```
 
-### Vercel部署
+### Docker部署
 
-1. 在Vercel中导入GitHub仓库
-2. 配置环境变量`CLOUDFLARE_API_TOKEN`
-3. 部署应用
+1. 构建镜像（在仓库根目录执行）：
+   ```bash
+   docker build -t cf-dns-hub .
+   ```
+2. 运行容器，并通过环境变量注入 Cloudflare Token：
+   ```bash
+   docker run -d \
+     --name cf-dns-hub \
+     -p 4000:4000 \
+     --env-file .env \
+     cf-dns-hub
+   ```
+   `.env` 文件需要包含 `CLOUDFLARE_API_TOKEN`。容器启动后，通过 `http://localhost:4000` 访问前端界面，API 仍然在 `/api/*` 路径下。
+3. 如需持久化密码文件，可挂载宿主机目录：
+   ```bash
+   docker run -d \
+     --name cf-dns-hub \
+     -p 4000:4000 \
+     --env-file .env \
+     -v ./data/password.json:/app/server/password.json \
+     cf-dns-hub
+   ```
 
 ## 默认登录信息
 

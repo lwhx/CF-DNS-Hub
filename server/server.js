@@ -162,6 +162,20 @@ app.post('/api/password/change', (req, res) => {
   }
 });
 
+// Serve pre-built client assets if they exist so Docker/production can reuse the same container.
+const staticDir = path.resolve(__dirname, '../client/dist');
+if (fs.existsSync(staticDir)) {
+  app.use(express.static(staticDir));
+
+  app.get('*', (req, res, next) => {
+    if (req.path.startsWith('/api/')) {
+      return next();
+    }
+
+    return res.sendFile(path.join(staticDir, 'index.html'));
+  });
+}
+
 // Central error handler to surface Cloudflare API problems cleanly to the frontend.
 // eslint-disable-next-line no-unused-vars
 app.use((err, req, res, next) => {
