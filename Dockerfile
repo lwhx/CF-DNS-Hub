@@ -21,6 +21,9 @@ RUN if [ -f package-lock.json ]; then \
 
 # 复制源码并构建
 COPY client/ ./
+# 某些环境下 .bin 或 vite.js 权限位异常，显式授予执行权限
+RUN chmod -R +x node_modules/.bin || true
+RUN chmod +x node_modules/vite/bin/vite.js || true
 RUN npm run build
 
 # Install server deps
