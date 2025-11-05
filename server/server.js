@@ -1,205 +1,227 @@
+// Express proxy server for Cloudflare DNS management
+// Loads Cloudflare API token from root .env, exposes REST endpoints for the client
+
+const path = require('path');
 const express = require('express');
 const cors = require('cors');
+const morgan = require('morgan');
 const axios = require('axios');
 const dotenv = require('dotenv');
-const path = require('path');
-const fs = require('fs');
+const compression = require('compression');
+const crypto = require('crypto');
 
-// Load environment variables from the project root so the token never reaches the client bundle.
-dotenv.config({ path: path.resolve(__dirname, '..', '.env') });
+// Load environment from root .env (one level up from /server)
+dotenv.config({ path: path.resolve(__dirname, '../.env') });
 
 const app = express();
-const PORT = process.env.PORT || 4000;
+const PORT = process.env.PORT || 3000;
+const ALLOWED_ORIGIN = process.env.CORS_ORIGIN || 'http://localhost:5173';
+const ADMIN_PASSWORD = process.env.ADMIN_PASSWORD || process.env.APP_PASSWORD || process.env.LOGIN_PASSWORD || '';
 
-// Password file lives alongside the server entry so we never ship it to the client bundle.
-const PASSWORD_FILE = path.join(__dirname, 'password.json');
-
-// Ensure the password file exists with a default credential so first run works.
-if (!fs.existsSync(PASSWORD_FILE)) {
-  fs.writeFileSync(PASSWORD_FILE, JSON.stringify({ password: 'admin' }), 'utf8');
-}
-
-const allowedOrigins = new Set(
-  (process.env.ALLOWED_ORIGINS || '')
-    .split(',')
-    .map((origin) => origin.trim())
-    .filter(Boolean)
-);
-
-// Allow localhost in dev; use ALLOWED_ORIGINS for deployed domains.
-app.use(
-  cors({
-    origin(origin, callback) {
-      if (!origin) {
-        return callback(null, true);
-      }
-
-      const isLocalhost = /^https?:\/\/(localhost|127\.0\.0\.1)(:\d+)?$/.test(origin);
-      if (isLocalhost || allowedOrigins.has(origin)) {
-        return callback(null, true);
-      }
-
-      return callback(new Error(`Origin "${origin}" not allowed by CORS policy`));
-    },
-  })
-);
-
+app.use(cors({ origin: ALLOWED_ORIGIN }));
 app.use(express.json());
+app.use(morgan('dev'));
+app.use(compression());
 
-const cloudflareToken = process.env.CLOUDFLARE_API_TOKEN;
-
-if (!cloudflareToken) {
-  console.error('CLOUDFLARE_API_TOKEN is not set in the environment.');
-  process.exit(1);
+// Normalize Cloudflare API token: trim whitespace and strip accidental 'Bearer ' prefix
+let CLOUDFLARE_API_TOKEN = (process.env.CLOUDFLARE_API_TOKEN || '').trim();
+if (CLOUDFLARE_API_TOKEN.toLowerCase().startsWith('bearer ')) {
+  CLOUDFLARE_API_TOKEN = CLOUDFLARE_API_TOKEN.slice(7).trim();
+}
+if (!CLOUDFLARE_API_TOKEN) {
+  console.warn('[WARN] CLOUDFLARE_API_TOKEN is not set. API calls will fail.');
 }
 
-// Warn if a placeholder token is still in use so the deployment fails fast.
-if (cloudflareToken === 'bYy6HQrhFRa6Zvz3Q619ViZ7ENBK9JFUQaOH7Aos') {
-  console.warn('Warning: example Cloudflare API token detected. Please set CLOUDFLARE_API_TOKEN to a real value.');
+if (!ADMIN_PASSWORD) {
+  console.warn('[WARN] ADMIN_PASSWORD is not set. API is exposed without login. Set ADMIN_PASSWORD for protection.');
 }
 
-// Shared axios instance so every request uses the correct auth header.
-const cloudflareClient = axios.create({
+// Preconfigured axios instance for Cloudflare API
+const cf = axios.create({
   baseURL: 'https://api.cloudflare.com/client/v4',
   headers: {
-    Authorization: `Bearer ${cloudflareToken}`,
-    'Content-Type': 'application/json',
+    Authorization: `Bearer ${CLOUDFLARE_API_TOKEN}`,
+    'Content-Type': 'application/json'
   },
+  timeout: Number(process.env.CF_API_TIMEOUT_MS || 45000)
 });
 
+// 简单内存缓存（TTL），用于加速 zones 与 dns_records 查询
+const CACHE_TTL_MS = Number(process.env.CF_CACHE_TTL_MS || 60000);
+const cache = new Map(); // key -> { ts, data }
+const now = () => Date.now();
+function cacheGet(key) {
+  const hit = cache.get(key);
+  if (!hit) return null;
+  if (now() - hit.ts > CACHE_TTL_MS) { cache.delete(key); return null; }
+  return hit.data;
+}
+function cacheSet(key, data) {
+  cache.set(key, { ts: now(), data });
+}
+function invalidateZone(zoneId) {
+  const prefix = `dns:${zoneId}:`;
+  for (const k of Array.from(cache.keys())) {
+    if (k === 'zones' || k.startsWith(prefix)) cache.delete(k);
+  }
+}
+
+// --- Minimal token auth ---
+// In-memory token store: token -> expiry timestamp (ms)
+const TOKEN_TTL_MS = Number(process.env.AUTH_TOKEN_TTL_MS || 1000 * 60 * 60 * 24 * 7); // default 7d
+const tokens = new Map();
+
+function issueToken() {
+  const token = crypto.randomBytes(24).toString('hex');
+  const exp = Date.now() + TOKEN_TTL_MS;
+  tokens.set(token, exp);
+  return { token, exp };
+}
+
+function validateToken(token) {
+  if (!ADMIN_PASSWORD) return true; // auth disabled when no password
+  if (!token) return false;
+  const exp = tokens.get(token);
+  if (!exp) return false;
+  if (Date.now() > exp) { tokens.delete(token); return false; }
+  return true;
+}
+
+function authMiddleware(req, res, next) {
+  if (!ADMIN_PASSWORD) return next();
+  // Allow login endpoint without token
+  if (req.path === '/auth/login') return next();
+  // Accept header x-auth-token or Authorization: Bearer <token>
+  const hdr = req.headers['x-auth-token'];
+  let token = typeof hdr === 'string' ? hdr : (Array.isArray(hdr) ? hdr[0] : '');
+  if (!token) {
+    const auth = req.headers['authorization'] || '';
+    if (typeof auth === 'string' && auth.startsWith('Bearer ')) token = auth.slice(7);
+  }
+  if (!validateToken(token)) {
+    return res.status(401).json({ error: true, message: 'Unauthorized' });
+  }
+  return next();
+}
+
+// Auth endpoints
+app.post('/api/auth/login', (req, res) => {
+  if (!ADMIN_PASSWORD) {
+    // No password configured; implicitly allow
+    return res.json({ success: true, token: null, expiresAt: null });
+  }
+  const pwd = req.body?.password || '';
+  if (typeof pwd !== 'string' || pwd.length === 0) {
+    return res.status(400).json({ error: true, message: 'Password required' });
+  }
+  if (pwd !== ADMIN_PASSWORD) {
+    return res.status(401).json({ error: true, message: 'Invalid password' });
+  }
+  const { token, exp } = issueToken();
+  return res.json({ success: true, token, expiresAt: exp });
+});
+
+// Apply auth for all API routes after /api/auth/login
+app.use('/api', authMiddleware);
+
+// GET /api/zones -> Cloudflare /zones
 app.get('/api/zones', async (req, res, next) => {
   try {
-    const { data } = await cloudflareClient.get('/zones', { params: req.query });
-    return res.json(data.result);
-  } catch (error) {
-    return next(error);
+    const key = 'zones';
+    const hit = cacheGet(key);
+    if (hit) {
+      res.set('Cache-Control', 'private, max-age=60, stale-while-revalidate=60');
+      return res.json(hit);
+    }
+    const { data } = await cf.get('/zones');
+    cacheSet(key, data);
+    res.set('Cache-Control', 'private, max-age=60, stale-while-revalidate=60');
+    return res.json(data);
+  } catch (err) {
+    next(err);
   }
 });
 
+// GET /api/zones/:zoneId/dns_records -> Cloudflare /zones/{zoneId}/dns_records
 app.get('/api/zones/:zoneId/dns_records', async (req, res, next) => {
   const { zoneId } = req.params;
   try {
-    const { data } = await cloudflareClient.get(`/zones/${zoneId}/dns_records`, { params: req.query });
-    return res.json(data.result);
-  } catch (error) {
-    return next(error);
+    const key = `dns:${zoneId}:${JSON.stringify(req.query || {})}`;
+    const hit = cacheGet(key);
+    if (hit) {
+      res.set('Cache-Control', 'private, max-age=60, stale-while-revalidate=60');
+      return res.json(hit);
+    }
+    const { data } = await cf.get(`/zones/${encodeURIComponent(zoneId)}/dns_records`, { params: req.query });
+    cacheSet(key, data);
+    res.set('Cache-Control', 'private, max-age=60, stale-while-revalidate=60');
+    return res.json(data);
+  } catch (err) {
+    next(err);
   }
 });
 
+// POST /api/zones/:zoneId/dns_records -> Cloudflare /zones/{zoneId}/dns_records
 app.post('/api/zones/:zoneId/dns_records', async (req, res, next) => {
   const { zoneId } = req.params;
   try {
-    const { data } = await cloudflareClient.post(`/zones/${zoneId}/dns_records`, req.body);
-    return res.status(201).json(data.result);
-  } catch (error) {
-    return next(error);
+    const { data } = await cf.post(`/zones/${encodeURIComponent(zoneId)}/dns_records`, req.body);
+    invalidateZone(zoneId);
+    res.status(201).json(data);
+  } catch (err) {
+    next(err);
   }
 });
 
+// PUT /api/zones/:zoneId/dns_records/:recordId -> Cloudflare /zones/{zoneId}/dns_records/{recordId}
 app.put('/api/zones/:zoneId/dns_records/:recordId', async (req, res, next) => {
   const { zoneId, recordId } = req.params;
   try {
-    const { data } = await cloudflareClient.put(`/zones/${zoneId}/dns_records/${recordId}`, req.body);
-    return res.json(data.result);
-  } catch (error) {
-    return next(error);
+    const { data } = await cf.put(`/zones/${encodeURIComponent(zoneId)}/dns_records/${encodeURIComponent(recordId)}`, req.body);
+    invalidateZone(zoneId);
+    res.json(data);
+  } catch (err) {
+    next(err);
   }
 });
 
+// DELETE /api/zones/:zoneId/dns_records/:recordId -> Cloudflare /zones/{zoneId}/dns_records/{recordId}
 app.delete('/api/zones/:zoneId/dns_records/:recordId', async (req, res, next) => {
   const { zoneId, recordId } = req.params;
   try {
-    const { data } = await cloudflareClient.delete(`/zones/${zoneId}/dns_records/${recordId}`);
-    return res.json(data.result);
-  } catch (error) {
-    return next(error);
+    const { data } = await cf.delete(`/zones/${encodeURIComponent(zoneId)}/dns_records/${encodeURIComponent(recordId)}`);
+    invalidateZone(zoneId);
+    res.json(data);
+  } catch (err) {
+    next(err);
   }
 });
 
-// Health endpoint helps verify the proxy is running without hitting Cloudflare.
-app.get('/api/health', (req, res) => res.json({ status: 'ok' }));
-
-// 密码管理API端点
-app.get('/api/password', (req, res) => {
-  try {
-    JSON.parse(fs.readFileSync(PASSWORD_FILE, 'utf8'));
-    res.json({ success: true });
-  } catch (error) {
-    res.status(500).json({ success: false, message: '获取密码信息失败' });
-  }
-});
-
-app.post('/api/password/verify', (req, res) => {
-  try {
-    const { password } = req.body;
-    const passwordData = JSON.parse(fs.readFileSync(PASSWORD_FILE, 'utf8'));
-
-    if (password === passwordData.password) {
-      res.json({ success: true });
-    } else {
-      res.status(401).json({ success: false, message: '密码错误' });
-    }
-  } catch (error) {
-    res.status(500).json({ success: false, message: '验证密码失败' });
-  }
-});
-
-app.post('/api/password/change', (req, res) => {
-  try {
-    const { currentPassword, newPassword } = req.body;
-    const passwordData = JSON.parse(fs.readFileSync(PASSWORD_FILE, 'utf8'));
-
-    if (currentPassword !== passwordData.password) {
-      return res.status(401).json({ success: false, message: '当前密码错误' });
-    }
-
-    passwordData.password = newPassword;
-    fs.writeFileSync(PASSWORD_FILE, JSON.stringify(passwordData), 'utf8');
-
-    res.json({ success: true, message: '密码修改成功' });
-  } catch (error) {
-    res.status(500).json({ success: false, message: '修改密码失败' });
-  }
-});
-
-// Serve pre-built client assets if they exist so Docker/production can reuse the same container.
-const staticDir = path.resolve(__dirname, '../client/dist');
-if (fs.existsSync(staticDir)) {
-  app.use(express.static(staticDir));
-
-  app.get('*', (req, res, next) => {
-    if (req.path.startsWith('/api/')) {
-      return next();
-    }
-
-    return res.sendFile(path.join(staticDir, 'index.html'));
-  });
-}
-
-// Central error handler to surface Cloudflare API problems cleanly to the frontend.
-// eslint-disable-next-line no-unused-vars
-app.use((err, req, res, next) => {
+// Global error handler to surface Cloudflare errors cleanly
+app.use((err, req, res, _next) => {
   if (err.response) {
+    // Cloudflare error or upstream error with response
     const { status, data } = err.response;
-    return res.status(status).json({
-      success: false,
-      errors: data?.errors || [{ message: data?.message || 'Cloudflare API error' }],
-    });
+    return res.status(status).json({ error: true, status, data });
   }
-
-  console.error('Unexpected server error:', err.message);
-  return res.status(500).json({
-    success: false,
-    errors: [{ message: 'Internal server error' }],
-  });
+  console.error(err);
+  res.status(500).json({ error: true, message: err.message || 'Internal Server Error' });
 });
 
-// In local dev we start a listener; on Vercel we export the app for the serverless handler.
-const isVercel = !!process.env.VERCEL;
-if (!isVercel) {
-  app.listen(PORT, () => {
-    console.log(`Cloudflare DNS manager proxy listening on port ${PORT}`);
+// Optionally serve built client as static files in production
+// This enables single-container deployment: API and UI from one origin
+try {
+  const staticDir = path.resolve(__dirname, '../client/dist');
+  app.use(express.static(staticDir));
+  // SPA fallback
+  app.get('*', (req, res) => {
+    res.sendFile(path.join(staticDir, 'index.html'));
   });
+} catch (_) {
+  // ignore if path not found during dev
 }
 
-module.exports = app;
+app.listen(PORT, () => {
+  console.log(`Server listening on http://localhost:${PORT}`);
+  console.log(`CORS allowed origin: ${ALLOWED_ORIGIN}`);
+});

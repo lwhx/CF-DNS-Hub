@@ -1,19 +1,53 @@
-# syntax=docker/dockerfile:1
+# Multi-stage build to produce a single image serving API + built UI
 
-FROM node:20-alpine AS client-builder
+# Build client
+FROM node:18-alpine AS client-build
 WORKDIR /app/client
+
+# 仅复制依赖清单，加快缓存命中并避免无关变更导致重装
 COPY client/package*.json ./
-RUN npm ci
-COPY client ./
+
+# 可选：支持自定义 npm 源（国内网络或企业代理）
+ARG NPM_REGISTRY=""
+RUN if [ -n "$NPM_REGISTRY" ]; then npm config set registry "$NPM_REGISTRY"; fi
+
+# 稳健安装依赖：优先使用 ci（如无 lock 则回退到 install）
+# 不要忽略错误（去掉了 `|| true`），否则 build 期才暴露问题难以排查
+RUN if [ -f package-lock.json ]; then \
+      npm ci --no-fund --no-audit --silent; \
+    else \
+      npm install --no-fund --no-audit --silent; \
+    fi
+
+# 复制源码并构建
+COPY client/ ./
 RUN npm run build
 
-FROM node:20-alpine AS server
+# Install server deps
+FROM node:18-alpine AS server-build
 WORKDIR /app/server
 COPY server/package*.json ./
-RUN npm ci --omit=dev
-COPY server ./
-COPY --from=client-builder /app/client/dist ../client/dist
+ARG NPM_REGISTRY=""
+RUN if [ -n "$NPM_REGISTRY" ]; then npm config set registry "$NPM_REGISTRY"; fi
+# 提高 npm 的网络健壮性（重试与超时）
+RUN npm config set fetch-retries 5 \
+ && npm config set fetch-retry-mintimeout 20000 \
+ && npm config set fetch-retry-maxtimeout 120000
+RUN if [ -f package-lock.json ]; then \
+      npm ci --omit=dev --no-fund --no-audit; \
+    else \
+      npm install --omit=dev --no-fund --no-audit; \
+    fi
+COPY server/ ./
 
+# Runtime image
+FROM node:18-alpine
 ENV NODE_ENV=production
-EXPOSE 4000
-CMD ["node", "server.js"]
+WORKDIR /app
+
+# Copy server and built client
+COPY --from=server-build /app/server /app/server
+COPY --from=client-build /app/client/dist /app/client/dist
+
+EXPOSE 3000
+CMD ["node", "server/server.js"]
