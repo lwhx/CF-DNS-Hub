@@ -1,14 +1,4 @@
 node_modules/
-**/node_modules/
-dist/
-client/dist/
-.git/
-.gitignore
-*.log
 .env
-Dockerfile*
-docker-compose.yml
-docker-build.ps1
-docker-build.sh
-docker-run.ps1
-docker-run.sh
+dist/
+*.log
