@@ -6,10 +6,10 @@
 
 **现代化的 Cloudflare DNS 管理面板**
 
-[![GitHub release](https://img.shields.io/github/v/release/puyujian/CF2DNS)](https://github.com/puyujian/CF2DNS/releases)
-[![Docker Pulls](https://img.shields.io/docker/pulls/puyujian/cf2dns)](https://hub.docker.com/r/puyujian/cf2dns)
-[![GitHub Container Registry](https://img.shields.io/badge/ghcr.io-cf2dns-blue)](https://github.com/puyujian/CF2DNS/pkgs/container/cf2dns)
-[![License](https://img.shields.io/github/license/puyujian/CF2DNS)](LICENSE)
+[![GitHub release](https://img.shields.io/github/v/release/lwhx/cf-dns-hub)](https://github.com/lwhx/cf-dns-hub/releases)
+[![Docker Pulls](https://img.shields.io/docker/pulls/lwhx/cf-dns-hub)](https://hub.docker.com/r/lwhx/cf-dns-hub)
+[![GitHub Container Registry](https://img.shields.io/badge/ghcr.io-cf2dns-blue)](https://github.com/lwhx/cf-dns-hub/pkgs/container/cf2dns)
+[![License](https://img.shields.io/github/license/lwhx/cf-dns-hub)](LICENSE)
 
 [🌐 在线演示](#) • [📖 快速开始](#快速开始) • [🐳 Docker 部署](#docker-部署) • [📚 文档](#文档)
 
@@ -75,7 +75,7 @@ CF2DNS/
 
 ```bash
 # 1. 克隆项目
-git clone https://github.com/puyujian/CF2DNS.git
+git clone https://github.com/lwhx/cf-dns-hub.git
 cd CF2DNS
 
 # 2. 配置环境变量
@@ -95,7 +95,7 @@ docker run -d \
   --name cf2dns \
   -p 3000:3000 \
   -e CLOUDFLARE_API_TOKEN=你的Token \
-  ghcr.io/puyujian/cf2dns:latest
+  ghcr.io/lwhx/cf-dns-hub:latest
 ```
 
 ## 🐳 Docker 部署
@@ -108,7 +108,7 @@ Docker Compose 是推荐的部署方式，可以一键启动完整的服务栈�
 
 ```bash
 # 克隆项目（或仅下载 docker-compose.yml）
-git clone https://github.com/puyujian/CF2DNS.git
+git clone https://github.com/lwhx/cf-dns-hub.git
 cd CF2DNS
 
 # 创建环境变量文件
@@ -151,10 +151,10 @@ docker compose down -v
 
 ```bash
 # 从 GitHub Container Registry 拉取
-docker pull ghcr.io/puyujian/cf2dns:latest
+docker pull ghcr.io/lwhx/cf-dns-hub:latest
 
 # 或从 Docker Hub 拉取（如果可用）
-docker pull puyujian/cf2dns:latest
+docker pull lwhx/cf-dns-hub:latest
 ```
 
 **2. 运行容器**
@@ -165,7 +165,7 @@ docker run -d \
   --restart unless-stopped \
   -p 3000:3000 \
   -e CLOUDFLARE_API_TOKEN=你的Token \
-  ghcr.io/puyujian/cf2dns:latest
+  ghcr.io/lwhx/cf-dns-hub:latest
 ```
 
 **3. 管理容器**
@@ -199,7 +199,7 @@ docker run -d \
   -e CLOUDFLARE_API_TOKEN=你的Token \
   -e PORT=3000 \
   -e CORS_ORIGIN=https://yourdomain.com \
-  ghcr.io/puyujian/cf2dns:latest
+  ghcr.io/lwhx/cf-dns-hub:latest
 ```
 
 ## 📦 手动部署
@@ -218,11 +218,11 @@ docker run -d \
 
 ```bash
 # 克隆项目
-git clone https://github.com/puyujian/CF2DNS.git
+git clone https://github.com/lwhx/cf-dns-hub.git
 cd CF2DNS
 
 # 或下载发行版
-wget https://github.com/puyujian/CF2DNS/archive/refs/tags/v1.0.0.tar.gz
+wget https://github.com/lwhx/cf-dns-hub/archive/refs/tags/v1.0.0.tar.gz
 tar -xzf v1.0.0.tar.gz
 cd CF2DNS-1.0.0
 ```
@@ -337,7 +337,7 @@ server {
 **1. 克隆项目**
 
 ```bash
-git clone https://github.com/puyujian/CF2DNS.git
+git clone https://github.com/lwhx/cf-dns-hub.git
 cd CF2DNS
 ```
 
@@ -430,7 +430,7 @@ docker run -d \
   -p 3000:3000 \
   -e CLOUDFLARE_API_TOKEN=你的Token \
   -e ADMIN_PASSWORD=你的管理密码 \
-  ghcr.io/puyujian/cf2dns:latest
+  ghcr.io/lwhx/cf-dns-hub:latest
 ```
 
 ## 📚 API 文档
