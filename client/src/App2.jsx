@@ -387,6 +387,9 @@ export default function App() {
 
   async function handleDelete(record) {
     if (!selectedZoneId || !record?.id) return
+    // 二次确认，避免误操作
+    const ok = window.confirm(`确定删除该记录吗？此操作不可撤销！\n${record.name || ''} (${record.type || ''}) -> ${record.content || ''}`)
+    if (!ok) return
     
     // 乐观更新：先从UI中移除记录
     const originalRecords = records
