@@ -133,10 +133,44 @@ app.get('/api/zones', async (req, res, next) => {
       res.set('Cache-Control', 'private, max-age=60, stale-while-revalidate=60');
       return res.json(hit);
     }
-    const { data } = await cf.get('/zones');
-    cacheSet(key, data);
+    
+    // Get all zones with pagination (Cloudflare API default is 20 per page)
+    const allZones = [];
+    let page = 1;
+    const perPage = 100; // Max allowed by Cloudflare API
+    let hasMore = true;
+    let lastResponseData;
+    
+    while (hasMore) {
+      const { data } = await cf.get('/zones', {
+        params: {
+          page: page,
+          per_page: perPage
+        }
+      });
+      
+      allZones.push(...data.result);
+      lastResponseData = data;
+      
+      // Check if there are more pages
+      hasMore = data.result_info && data.result_info.total_pages > page;
+      page++;
+    }
+    
+    // Create a response object with all zones
+    const response = {
+      ...lastResponseData, // Keep other metadata from the last response
+      result: allZones,
+      result_info: {
+        ...lastResponseData.result_info,
+        count: allZones.length,
+        total_count: allZones.length
+      }
+    };
+    
+    cacheSet(key, response);
     res.set('Cache-Control', 'private, max-age=60, stale-while-revalidate=60');
-    return res.json(data);
+    return res.json(response);
   } catch (err) {
     next(err);
   }
