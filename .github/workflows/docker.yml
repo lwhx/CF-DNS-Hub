@@ -2,7 +2,7 @@ name: Build and Push Container
 
 on:
   push:
-    branches: [ cf, master ]
+    branches: [ main, master ]
   workflow_dispatch: {}
 
 permissions:
